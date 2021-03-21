@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<root>
+    <textureFile texture="data/resources/terrain2.png" cols="16" rows="16"/>
+    <water all="205"/>
+	<lava all="237"/>
+    <air all="167"/>
+	<bedrock all="5"/>
+	<grass top="0" bottom="2" front="3" back ="3" right="3" left="3"/>
+	<dirt all="2"/>
+	<stone all="1"/>
+	<sand all="18"/>
+	<wood top="21" bottom="21" front="20" back ="20" right="20" left="20"/>
+	<leaves all="52"/>
+	<flower1 all="12"/>
+	<flower2 all="13"/>
+	<bush all="90"/>
+	<glass all="49"/>
+	<snow all="66"/>
+</root>
