@@ -47,6 +47,9 @@ public class Chunk implements Disposable {
 
 	public int maxHeight;
 
+  public int _tmpChecksum;
+  
+  
 	public Chunk(ChunkProvider chunkProvider) {
 		
 		this.chunkProvider = chunkProvider;

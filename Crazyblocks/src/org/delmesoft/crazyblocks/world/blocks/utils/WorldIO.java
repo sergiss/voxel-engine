@@ -12,6 +12,11 @@ import org.delmesoft.crazyblocks.world.blocks.Blocks;
 import org.delmesoft.crazyblocks.world.blocks.Chunk;
 import org.delmesoft.crazyblocks.world.blocks.utils.generators.ChunkGenerator;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,9 +37,56 @@ public class WorldIO {
 	}
 
 	private String levelName;
-
+	
+	
 	private WorldIO() {}
+	
+	public static final boolean writeChecksums=true;
+	
+	public static final int specialBlockType=100;
 
+	public static final int chunkSection_checksum=1;
+	public static final int chunkSection_extraBlockData=2;
+  
+	public void writeSpecialBlockHeader(DataOutputStream writer) throws IOException {
+		writer.writeInt  ( 0 );
+		writer.writeShort( (short)specialBlockType );
+	}
+	
+	public void readSpecialChunkSection(Chunk chunk, ChunkData data, int index, short blockType, DataInputStream reader) throws IOException {
+	  
+		byte sectionType=reader.readByte();
+	  
+		if (sectionType==chunkSection_checksum) //Checksum section
+		{
+			reader.readByte(); //future versions
+	    
+			int checksum=reader.readInt();
+			boolean valid=(checksum==chunk._tmpChecksum);
+			if (!valid)
+			{
+				System.out.println("chunk("+chunk.localX+","+chunk.localZ+") checksum invalid - "+checksum+"!="+chunk._tmpChecksum);
+			}
+		}
+		else
+		{
+			throw new IOException("readSpecialChunkSection: Unhandled section type: "+sectionType);
+		}
+	}
+	
+	public void writeChunkChecksum(DataOutputStream writer, Chunk chunk) throws IOException {
+	  
+		//checksum
+		writeSpecialBlockHeader(writer);
+		writer.writeByte(chunkSection_checksum);
+		writer.writeByte(1); //version
+		writer.writeInt(chunk._tmpChecksum);
+		writer.flush();
+	}
+	
+	
+	
+	
 	public void loadChangedData(Chunk chunk) {
 
 		try {
@@ -51,21 +103,41 @@ public class WorldIO {
 				if(fileHandle.exists()) {
 
 					ChunkData data = chunk.chunkData;
-
 					try {
 
-						InputStream reader = fileHandle.read();
+						InputStream rawReader = fileHandle.read();
+						BufferedInputStream bufferedReader=new BufferedInputStream(rawReader); //for faster IO access
+						DataInputStream reader=new DataInputStream(bufferedReader);
+						
+						
+						int chuckVersion=reader.readInt(); //reserved for future
+						
+						chunk._tmpChecksum=0;
+						
+						while (true) {
+						  
+						  int index;
+						  short blockType;
 
-						int index;
-						short blockType;
-
-						byte[] buffer = WorldIO.buffer;
-
-						while (reader.read(buffer, 0, 6) > 0) {
-							index = buffer[0] << 24 | (buffer[1] & 0xFF) << 16 | (buffer[2] & 0xFF) << 8 | (buffer[3] & 0xFF);
-							blockType = (short) (buffer[4] << 8 | (buffer[5] & 0xFF));
-							chunk.changeMap.put(index, blockType);
-							data.setRawType(index, blockType);
+						  try
+						  {
+						    index = reader.readInt();
+						    blockType = reader.readShort();
+						  }
+						  catch (EOFException e)
+						  {
+						    break;
+						  }
+							if (blockType==specialBlockType)
+							{
+							  readSpecialChunkSection(chunk, data, index, blockType, reader);
+							}
+							else
+							{
+							  chunk._tmpChecksum+=index+blockType;
+  							chunk.changeMap.put(index, blockType);
+  							data.setRawType(index, blockType);
+							}
 						}
 
 						reader.close();
@@ -86,7 +158,7 @@ public class WorldIO {
 
 	}
 
-	public void saveChangedData(Chunk chunk) {
+	public void saveChangedData(final Chunk chunk) {
 
 		try {
 
@@ -100,28 +172,45 @@ public class WorldIO {
 			FileHandle fileHandle = Gdx.files.local(String.format(chunkFormat, levelName, x, z));
 
 			try {
-
-				final OutputStream writer = fileHandle.write(false);
-
-				EntryIterator it = new EntryIterator() {
-
-					@Override
-					public void next(Entry entry) {
-
-						try {
-							writer.write(toByteArray((int) entry.key, (Short) entry.object), 0, 6);
-						} catch (IOException e) {
-							 e.printStackTrace(); // TODO : log
-						}
-
-					}
-				};
-
-				chunk.changeMap.iterate(it);
-
-				writer.flush();
-				writer.close();
-
+			  
+				OutputStream rawWriter = fileHandle.write(false);
+				BufferedOutputStream writerBuffer=new BufferedOutputStream(rawWriter);
+				final DataOutputStream writer=new DataOutputStream(writerBuffer);
+				
+				try
+				{
+  				if (writeChecksums) chunk._tmpChecksum=0;
+          
+  				writer.writeInt(1); //chunk version
+  				
+  				EntryIterator it = new EntryIterator() {
+  
+  					@Override
+  					public void next(Entry entry) {
+  
+  						try {
+  						  if (writeChecksums) chunk._tmpChecksum+=(int)entry.key + (Short)entry.object;
+  						  
+  							writer.writeInt(   (int)entry.key );
+  							writer.writeShort( (Short)entry.object );
+  							
+  						} catch (IOException e) {
+  							 e.printStackTrace(); // TODO : log
+  						}
+  
+  					}
+  				};
+  				
+  				chunk.changeMap.iterate(it);
+  				
+  				if (writeChecksums) writeChunkChecksum(writer, chunk);
+  				
+				}
+				finally
+				{
+				  writer.close();
+				}
+				
 			} catch (Exception e) {
 				 e.printStackTrace(); // TODO : log
 			}
@@ -140,6 +229,10 @@ public class WorldIO {
 		try {
 
 			final OutputStream writer = fileHandle.write(false);
+			
+			//Save Version
+			writer.write(longToBytes(1), 0, 8);
+			
 			// Seed
 			writer.write(longToBytes(Settings.seed), 0, 8);
 			// player position
@@ -174,14 +267,18 @@ public class WorldIO {
 
 				InputStream reader = fileHandle.read();
 
-				byte[] buffer = WorldIO.buffer;
-
+				byte[] buffer = new byte[32];
+				
 				// ChunkVisibility
 
 				// fieldOfView
 
 				// smoothLighting
-
+				
+				//Save Version
+				reader.read(buffer, 0, 8);
+				long saveVersion=bytesToLong(buffer, 0);
+	      
 				// Seed
 				reader.read(buffer, 0, 8);
 				Settings.seed = bytesToLong(buffer, 0);
@@ -217,9 +314,9 @@ public class WorldIO {
 		return levelName;
 	}
 
-	private static final byte[] buffer = new byte[32];
+	
 
-	public static byte[] toByteArray(int index, short data) {
+	public static byte[] toByteArray(byte[] buffer, int index, short data) {
 
 		buffer[0] = (byte)(index >>> 24);
 		buffer[1] = (byte)(index >>> 16);
