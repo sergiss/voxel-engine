@@ -5,6 +5,7 @@ import org.delmesoft.crazyblocks.utils.datastructure.LinkedList;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ThreadPool {
@@ -25,10 +26,22 @@ public class ThreadPool {
 
 	private ExceptionListener exceptionListener;
 
+	ThreadFactory threadFactory=new ThreadFactory()
+  {
+    @Override
+    public Thread newThread(Runnable r)
+    {
+      Thread t = Executors.defaultThreadFactory().newThread(r);
+      t.setDaemon(true);
+      return t;
+    }
+  };
+	
+	
 	public ThreadPool(int maxThreads) {
 		this.maxThreads = Math.max(maxThreads, 1);
 		runnables = new LinkedList<Runnable>();
-		executor = Executors.newFixedThreadPool(maxThreads);
+		executor = Executors.newFixedThreadPool(maxThreads, threadFactory);
 
 		reentrantLock = new ReentrantLock(true);
 	}
